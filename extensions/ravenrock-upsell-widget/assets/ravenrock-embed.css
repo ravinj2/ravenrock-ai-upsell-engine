@@ -1,0 +1,118 @@
+/* RavenRock Upsell UI */
+
+#ravenrock-upsell-btn{
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 999999;
+  background: #000;
+  color: #fff;
+  border: 0;
+  border-radius: 999px;
+  padding: 12px 14px;
+  font: 600 14px/1.1 system-ui,-apple-system,Segoe UI,Roboto,Arial;
+  cursor: pointer;
+  box-shadow: 0 12px 28px rgba(0,0,0,.28);
+}
+
+#ravenrock-upsell-backdrop{
+  position: fixed;
+  inset: 0;
+  z-index: 999998;
+  background: rgba(0,0,0,.45);
+}
+
+#ravenrock-upsell-modal{
+  position: fixed;
+  right: 18px;
+  bottom: 70px;
+  z-index: 999999;
+  width: min(420px, calc(100vw - 36px));
+  background: #fff;
+  color: #111;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.35);
+  overflow: hidden;
+  font: 14px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial;
+}
+
+#ravenrock-upsell-modal .rr-header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: #0b0b0b;
+  color: #fff;
+}
+
+#ravenrock-upsell-modal .rr-title{
+  font-weight: 700;
+}
+
+#ravenrock-upsell-modal .rr-close{
+  background: transparent;
+  border: 0;
+  color: #fff;
+  font-size: 22px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 6px;
+}
+
+#ravenrock-upsell-modal .rr-body{
+  padding: 12px 14px;
+}
+
+#ravenrock-upsell-modal .rr-subtitle{
+  margin: 0 0 10px;
+  opacity: .85;
+}
+
+#ravenrock-upsell-modal .rr-cards{
+  display: grid;
+  gap: 10px;
+}
+
+.rr-card{
+  border: 1px solid rgba(0,0,0,.12);
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.rr-left{
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.rr-name{
+  font-weight: 700;
+}
+
+.rr-small{
+  font-size: 12px;
+  opacity: .75;
+}
+
+.rr-card button{
+  background: #000;
+  color: #fff;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 10px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.rr-img{
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid rgba(0,0,0,.12);
+  display: block;
+}

@@ -1,0 +1,40 @@
+{%- comment -%}
+RavenRock AI Upsell Engine — App Embed
+Dit geeft config door aan ravenrock-embed.js via data-attributes.
+Assets (JS/CSS) worden door Shopify geladen via het schema hieronder.
+{%- endcomment -%}
+
+<div
+  id="ravenrock-config"
+  data-shop="{{ shop.permanent_domain }}"
+  data-upsell-mode="{{ block.settings.upsell_mode }}"
+  data-variant-ids="{{ block.settings.upsell_variant_ids | escape }}"
+></div>
+
+{% schema %}
+{
+  "name": "RavenRock Upsell",
+  "target": "body",
+  "javascript": "ravenrock-embed.js",
+  "stylesheet": "ravenrock-embed.css",
+  "settings": [
+    {
+      "type": "select",
+      "id": "upsell_mode",
+      "label": "Upsell source",
+      "default": "collection",
+      "options": [
+        { "value": "collection", "label": "Auto (same collection)" },
+        { "value": "manual", "label": "Manual (variant IDs list)" }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "upsell_variant_ids",
+      "label": "Manual variant IDs (comma separated)",
+      "default": "PASTE_VARIANT_IDS_HERE",
+      "info": "Only used when Upsell source = Manual. Example: 4291...,4291...,4291..."
+    }
+  ]
+}
+{% endschema %}
