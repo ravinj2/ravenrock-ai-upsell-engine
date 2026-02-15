@@ -1,0 +1,17 @@
+
+{
+    "modal_title": "RavenRock Upsell",
+    "recommended_addons": "Aanbevolen toevoegingen:",
+    "add": "Toevoegen",
+    "added": "Toegevoegd ✓",
+    "adding": "Bezig met toevoegen…",
+    "loading": "Laden…",
+    "fetching": "Upsells ophalen",
+    "no_recommendations": "Nog geen aanbevelingen",
+    "select_variants": "Selecteer varianten in de app-instellingen.",
+    "load_failed": "Kon upsells niet laden",
+    "check_console": "Open console voor details",
+    "close": "Sluiten",
+    "recommendationText": "Aanbevolen product!"
+  }
+

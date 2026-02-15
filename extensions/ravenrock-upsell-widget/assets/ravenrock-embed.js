@@ -4,9 +4,17 @@
 
   const PROXY_PATH = "/apps/ravenrock";
   const LIMIT = 3;
+  let REDIRECT_TO_CART = true;
+  let LOCALE = 'en';
+  let TRANSLATIONS = {};
 
   const root =
     (window.Shopify && Shopify.routes && Shopify.routes.root) ? Shopify.routes.root : "/";
+
+  // Vertaalfunctie
+  function t(key) {
+    return TRANSLATIONS[key] || key;
+  }
 
   function getProductHandle() {
     const p = window.location.pathname || "";
@@ -28,6 +36,37 @@
     }[c]));
   }
 
+  // Laad vertalingen
+ // Laad vertalingen
+async function loadTranslations(locale) {
+  const lang = locale?.toLowerCase().startsWith('nl') ? 'nl' : 'en';
+  
+  try {
+    const res = await fetch(`/apps/ravenrock/translations?locale=${lang}`);
+    if (res.ok) {
+      TRANSLATIONS = await res.json();
+    }
+  } catch (err) {
+    console.warn('[RavenRock] Could not load translations:', err);
+    // Fallback vertalingen
+    TRANSLATIONS = {
+      modal_title: "RavenRock Upsell",
+      recommended_addons: "Recommended add-ons:",
+      add: "Add",
+      added: "Added ✓",
+      adding: "Adding…",
+      loading: "Loading…",
+      fetching: "Fetching upsells",
+      no_recommendations: "No recommendations yet",
+      select_variants: "Select variants in the app settings.",
+      load_failed: "Could not load upsells",
+      check_console: "Open console for details",
+      close: "Close"
+    };
+  }
+}
+
+
   // UI
   const btn = document.createElement("button");
   btn.id = "ravenrock-upsell-btn";
@@ -41,27 +80,35 @@
   const modal = document.createElement("div");
   modal.id = "ravenrock-upsell-modal";
   modal.hidden = true;
-  modal.innerHTML = `
-    <div class="rr-header">
-      <div class="rr-title">RavenRock Upsell</div>
-      <button class="rr-close" type="button" aria-label="Close">×</button>
-    </div>
-    <div class="rr-body">
-      <div class="rr-subtitle">Recommended add-ons:</div>
-      <div class="rr-cards" id="rr-cards"></div>
-    </div>
-  `;
 
   document.body.append(btn, backdrop, modal);
 
-  const cardsEl = modal.querySelector("#rr-cards");
-  const closeBtn = modal.querySelector(".rr-close");
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "rr-close";
+  closeBtn.type = "button";
+
+  function renderModal() {
+    modal.innerHTML = `
+      <div class="rr-header">
+        <div class="rr-title">${t('modal_title')}</div>
+        <button class="rr-close" type="button" aria-label="${t('close')}">×</button>
+      </div>
+      <div class="rr-body">
+        <div class="rr-subtitle">${t('recommended_addons')}</div>
+        <div class="rr-cards" id="rr-cards"></div>
+      </div>
+    `;
+    
+    const newCloseBtn = modal.querySelector(".rr-close");
+    newCloseBtn.addEventListener("click", closeModal);
+  }
 
   function openModal() {
     backdrop.hidden = false;
     modal.hidden = false;
     loadUpsells();
   }
+  
   function closeModal() {
     backdrop.hidden = true;
     modal.hidden = true;
@@ -69,7 +116,6 @@
 
   btn.addEventListener("click", openModal);
   backdrop.addEventListener("click", closeModal);
-  closeBtn.addEventListener("click", closeModal);
 
   async function fetchUpsells() {
     const params = new URLSearchParams();
@@ -81,7 +127,7 @@
     const shop = getShopDomain();
     if (shop) params.set("shop", shop);
 
-    const url = PROXY_PATH + "/recommend?" + params.toString();
+   const url = PROXY_PATH + "/recommendations?" + params.toString();
 
     const res = await fetch(url, {
       credentials: "same-origin",
@@ -110,32 +156,15 @@
     return data;
   }
 
-  cardsEl.addEventListener("click", async (e) => {
-    const b = e.target.closest("button[data-variant]");
-    if (!b) return;
-
-    b.disabled = true;
-    const original = b.textContent;
-    b.textContent = "Adding…";
-
-    try {
-      await addToCart(b.getAttribute("data-variant"));
-      b.textContent = "Added ✓";
-      window.location.href = root + "cart"; // MVP: altijd correct op elk theme
-    } catch (err) {
-      console.error("[RavenRock] addToCart failed", err);
-      alert(String(err.message || err));
-      b.textContent = original;
-      b.disabled = false;
-    }
-  });
-
   async function loadUpsells() {
+    const cardsEl = modal.querySelector("#rr-cards");
+    if (!cardsEl) return;
+
     cardsEl.innerHTML = `
       <div class="rr-card">
         <div class="rr-left">
-          <div class="rr-name">Loading…</div>
-          <div class="rr-small">Fetching upsells</div>
+          <div class="rr-name">${t('loading')}</div>
+          <div class="rr-small">${t('fetching')}</div>
         </div>
         <button type="button" disabled>—</button>
       </div>
@@ -143,14 +172,34 @@
 
     try {
       const data = await fetchUpsells();
-      const items = Array.isArray(data.items) ? data.items.slice(0, LIMIT) : [];
+      
+      // Sla locale en redirect setting op
+      if (data.locale) {
+        LOCALE = data.locale;
+        await loadTranslations(LOCALE);
+        renderModal(); // Re-render met nieuwe vertalingen
+      }
+      
+      if (data.meta && typeof data.meta.redirectToCart === 'boolean') {
+        REDIRECT_TO_CART = data.meta.redirectToCart;
+      }
+      
+      let items = Array.isArray(data.items) ? data.items : [];
+
+      // Filter out-of-stock items
+      const excludeOutOfStock = data.meta?.excludeOutOfStock;
+      if (excludeOutOfStock) {
+        items = items.filter(it => !it.isSoldOut);
+      }
+
+      items = items.slice(0, LIMIT);
 
       if (!items.length) {
         cardsEl.innerHTML = `
           <div class="rr-card">
             <div class="rr-left">
-              <div class="rr-name">No recommendations yet</div>
-              <div class="rr-small">Select variants in the app settings.</div>
+              <div class="rr-name">${t('no_recommendations')}</div>
+              <div class="rr-small">${t('select_variants')}</div>
             </div>
             <button type="button" disabled>—</button>
           </div>
@@ -170,21 +219,57 @@
               <div class="rr-name">${title}</div>
               <div class="rr-small">${price}</div>
             </div>
-            <button type="button" data-variant="${vid}">Add</button>
+            <button type="button" data-variant="${vid}">${t('add')}</button>
           </div>
         `;
       }).join("");
+
+      // Event listener voor add buttons
+      cardsEl.addEventListener("click", async (e) => {
+        const b = e.target.closest("button[data-variant]");
+        if (!b) return;
+
+        b.disabled = true;
+        const original = b.textContent;
+        b.textContent = t('adding');
+
+        try {
+          await addToCart(b.getAttribute("data-variant"));
+          b.textContent = t('added');
+          
+          if (REDIRECT_TO_CART) {
+            window.location.href = root + "cart";
+          } else {
+            if (window.Shopify && window.Shopify.theme && window.Shopify.theme.cart) {
+              window.Shopify.theme.cart.getState();
+            }
+            document.dispatchEvent(new CustomEvent('cart:updated'));
+          }
+        } catch (err) {
+          console.error("[RavenRock] addToCart failed", err);
+          alert(String(err.message || err));
+          b.textContent = original;
+          b.disabled = false;
+        }
+      });
+
     } catch (err) {
       console.error("[RavenRock] fetchUpsells failed", err);
       cardsEl.innerHTML = `
         <div class="rr-card">
           <div class="rr-left">
-            <div class="rr-name">Could not load upsells</div>
-            <div class="rr-small">Open console for details</div>
+            <div class="rr-name">${t('load_failed')}</div>
+            <div class="rr-small">${t('check_console')}</div>
           </div>
           <button type="button" disabled>—</button>
         </div>
       `;
     }
   }
+
+  // Initialiseer
+  (async function init() {
+    await loadTranslations('en'); // Start met Engels
+    renderModal();
+  })();
 })();

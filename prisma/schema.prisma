@@ -33,20 +33,28 @@ model Session {
   refreshTokenExpires DateTime?
 }
 
-model UpsellSettings {
-  id               String   @id @default(cuid())
-  shop             String   @unique
-
-  upsellMode       String   @default("collection")
-  manualVariantIds String   @default("")
-  fallbackVariantIds String @default("")
-  limit            Int      @default(3)
-
-  excludeGiftCards Boolean  @default(true)
-  excludeOutOfStock Boolean @default(true)
-
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+model Settings {
+  id                  String   @id @default(cuid())
+  shop                String   @unique
+  upsellMode          String   @default("collection")
+  manualVariantIds    String   @default("")
+  fallbackVariantIds  String   @default("")
+  limit               Int      @default(3)
+  excludeGiftCards    Boolean  @default(false)
+  excludeOutOfStock   Boolean  @default(false)
+  redirectToCart      Boolean  @default(true)
+  
+  // AI Recommendations
+  aiEnabled           Boolean  @default(false)
+  aiMonthlyLimit      Int      @default(1000)
+  aiCallsThisMonth    Int      @default(0)
+  aiFallbackMode      String   @default("collection")
+  aiMessageText       String   @default("Based on your browsing, we think you'll love these")
+  fallbackMessageText String   @default("You might also like")
+  
+  // Localization
+  widgetLocale        String?  // null = auto (use shop locale)
+  
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 }
-
-

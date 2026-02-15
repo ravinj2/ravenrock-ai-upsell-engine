@@ -1,10 +1,16 @@
 {
-  "ratings": {
-    "stars": {
-      "label": "Ratings"
-    },
-    "home": {
-      "recommendationText": "Recommended Product!"
-    }
-  }
+    "modal_title": "RavenRock Upsell",
+    "recommended_addons": "Recommended add-ons:",
+    "add": "Add",
+    "added": "Added ✓",
+    "adding": "Adding…",
+    "loading": "Loading…",
+    "fetching": "Fetching upsells",
+    "no_recommendations": "No recommendations yet",
+    "select_variants": "Select variants in the app settings.",
+    "load_failed": "Could not load upsells",
+    "check_console": "Open console for details",
+    "close": "Close",
+    "recommendationText": "Recommended Product!"
 }
+

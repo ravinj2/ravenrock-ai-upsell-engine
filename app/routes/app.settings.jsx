@@ -1,87 +1,146 @@
+import {
+  Page,
+  Layout,
+  Card,
+  BlockStack,
+  InlineStack,
+  InlineGrid,
+  FormLayout,
+  Select,
+  TextField,
+  Checkbox,
+  Button,
+  ButtonGroup,
+  Text,
+  Box,
+  CalloutCard,
+  Banner,
+} from '@shopify/polaris';
 import { useLoaderData, useActionData, Form, useNavigation } from "react-router";
 import { useCallback, useMemo, useState } from "react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
+import { json } from "@remix-run/node";
 import db from "../db.server";
+import { VariantSelector } from "../components/VariantSelector";
+import { translations, getTranslation } from "../translations";
 
-export async function loader({ request }) {
+
+export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
-  const shop = session.shop;
-
-  const settings = await db.upsellSettings.upsert({
-    where: { shop },
-    update: {},
-    create: {
-      shop,
-      upsellMode: "collection",
-      manualVariantIds: "",
-      fallbackVariantIds: "",
-      limit: 3,
-      excludeGiftCards: true,
-      excludeOutOfStock: true,
-    },
+  
+  // Detecteer admin locale (voor settings pagina) en shop locale (voor widget)
+  const adminLocale = session?.locale || "en";
+  const shopLocale = session?.locale || "en";
+  
+  let settings = await db.settings.findFirst({
+    where: { shop: session.shop }
   });
+  
+  if (!settings) {
+    settings = await db.settings.create({
+      data: {
+        shop: session.shop,
+        upsellMode: "collection",
+        manualVariantIds: "",
+        fallbackVariantIds: "",
+        limit: 3,
+        excludeGiftCards: false,
+        excludeOutOfStock: false,
+        redirectToCart: true,
+        aiEnabled: false,
+        aiMonthlyLimit: 1000,
+        aiCallsThisMonth: 0,
+        aiFallbackMode: "collection",
+        aiMessageText: "Based on your browsing, we think you'll love these",
+        fallbackMessageText: "You might also like",
+        widgetLocale: null,
+      }
+    });
+  }
+  
+  return json({ settings, shopLocale, adminLocale });
+};
 
-  return { settings };
-}
-
-function normalizeVariantIds(input) {
-  const raw = String(input || "");
-  const matches = raw.match(/\d{6,}/g) || [];
-  const uniq = [];
-  for (const m of matches) if (!uniq.includes(m)) uniq.push(m);
-  return uniq.join(",");
-}
-
-export async function action({ request }) {
+export const action = async ({ request }) => {
   const { session } = await authenticate.admin(request);
-  const shop = session.shop;
-
-  const form = await request.formData();
-
-  const upsellMode = String(form.get("upsellMode") || "collection");
-  const manualVariantIds = normalizeVariantIds(form.get("manualVariantIds"));
-  const fallbackVariantIds = normalizeVariantIds(form.get("fallbackVariantIds"));
-  const limit = Math.min(Math.max(Number(form.get("limit") || 3), 1), 6);
-
-  const excludeGiftCards = form.get("excludeGiftCards") === "on";
-  const excludeOutOfStock = form.get("excludeOutOfStock") === "on";
-
-  await db.upsellSettings.upsert({
-    where: { shop },
-    update: {
-      upsellMode,
-      manualVariantIds,
-      fallbackVariantIds,
-      limit,
-      excludeGiftCards,
-      excludeOutOfStock,
-    },
-    create: {
-      shop,
-      upsellMode,
-      manualVariantIds,
-      fallbackVariantIds,
-      limit,
-      excludeGiftCards,
-      excludeOutOfStock,
-    },
+  const formData = await request.formData();
+  
+  const widgetLocaleValue = formData.get("widgetLocale");
+  
+  const settingsData = {
+    upsellMode: formData.get("upsellMode"),
+    manualVariantIds: formData.get("manualVariantIds") || "",
+    fallbackVariantIds: formData.get("fallbackVariantIds") || "",
+    limit: Number(formData.get("limit")),
+    excludeGiftCards: formData.get("excludeGiftCards") === "true", 
+    excludeOutOfStock: formData.get("excludeOutOfStock") === "true",  
+    redirectToCart: formData.get("redirectToCart") === "true",
+    aiEnabled: formData.get("aiEnabled") === "true",
+    aiMonthlyLimit: Number(formData.get("aiMonthlyLimit")),
+    aiFallbackMode: formData.get("aiFallbackMode") || "collection",
+    aiMessageText: formData.get("aiMessageText") || "",
+    fallbackMessageText: formData.get("fallbackMessageText") || "",
+    widgetLocale: widgetLocaleValue === "auto" ? null : widgetLocaleValue,
+  };
+  
+  await db.settings.upsert({
+    where: { shop: session.shop },
+    update: settingsData,
+    create: { shop: session.shop, ...settingsData }
   });
-
-  return { ok: true };
-}
+  
+  return json({ success: true });
+};
 
 export default function SettingsPage() {
-  const { settings } = useLoaderData();
+  const { settings, shopLocale, adminLocale } = useLoaderData();
   const shopify = useAppBridge();
-
-  // Controlled state
+  const navigation = useNavigation();
+  
+  // Helper functie voor vertalingen
+  const t = (key) => getTranslation(adminLocale, `settings.${key}`);
+  
   const [upsellMode, setUpsellMode] = useState(settings.upsellMode || "collection");
   const [manualVariantIds, setManualVariantIds] = useState(settings.manualVariantIds || "");
   const [fallbackVariantIds, setFallbackVariantIds] = useState(settings.fallbackVariantIds || "");
   const [limit, setLimit] = useState(Number(settings.limit || 3));
   const [excludeGiftCards, setExcludeGiftCards] = useState(!!settings.excludeGiftCards);
   const [excludeOutOfStock, setExcludeOutOfStock] = useState(!!settings.excludeOutOfStock);
+  const [redirectToCart, setRedirectToCart] = useState(settings.redirectToCart !== false);
+  const [aiEnabled, setAiEnabled] = useState(!!settings.aiEnabled);
+  const [aiMonthlyLimit, setAiMonthlyLimit] = useState(settings.aiMonthlyLimit || 1000);
+  const [aiFallbackMode, setAiFallbackMode] = useState(settings.aiFallbackMode || "collection");
+  const [aiMessageText, setAiMessageText] = useState(settings.aiMessageText || "Based on your browsing, we think you'll love these");
+  const [fallbackMessageText, setFallbackMessageText] = useState(settings.fallbackMessageText || "You might also like");
+  const [widgetLocale, setWidgetLocale] = useState(settings.widgetLocale || "auto");
+  const [variantSelectorOpen, setVariantSelectorOpen] = useState(false);
+  const [currentSetter, setCurrentSetter] = useState(null);
+
+  const localeOptions = [
+    { label: `${t('autoShopLanguage')} ${shopLocale.toUpperCase()})`, value: "auto" },
+    { label: "English", value: "en" },
+    { label: "Nederlands", value: "nl" },
+    { label: "Deutsch", value: "de" },
+    { label: "Français", value: "fr" },
+    { label: "Español", value: "es" },
+    { label: "Italiano", value: "it" },
+    { label: "Português (BR)", value: "pt-BR" },
+    { label: "Português (PT)", value: "pt-PT" },
+    { label: "日本語", value: "ja" },
+    { label: "简体中文", value: "zh-CN" },
+    { label: "繁體中文", value: "zh-TW" },
+    { label: "한국어", value: "ko" },
+    { label: "Dansk", value: "da" },
+    { label: "Suomi", value: "fi" },
+    { label: "Norsk (Bokmål)", value: "nb" },
+    { label: "Svenska", value: "sv" },
+    { label: "Čeština", value: "cs" },
+    { label: "Polski", value: "pl" },
+    { label: "ไทย", value: "th" },
+    { label: "Türkçe", value: "tr" },
+    { label: "हिन्दी", value: "hi" },
+  ];
 
   function toCsv(ids) {
     const uniq = Array.from(new Set(ids.map(String).map((s) => s.trim()).filter(Boolean)));
@@ -101,459 +160,331 @@ export default function SettingsPage() {
       .filter(Boolean).length;
   }
 
-  async function pickVariants(setter) {
-  try {
-    // 1) Als jouw template resourcePicker al aanbiedt (werkt soms wel)
-    if (shopify && typeof shopify.resourcePicker === "function") {
-      const selected = await shopify.resourcePicker({
-        type: "variant",
-        multiple: true,
-        action: "select",
-      });
-
-      if (!selected) return;
-
-      const arr = Array.isArray(selected)
-        ? selected
-        : Array.isArray(selected?.selection)
-          ? selected.selection
-          : [];
-
-      const ids = arr.map((r) => extractNumericId(r?.id)).filter(Boolean);
-      if (ids.length) setter(toCsv(ids));
-      return;
-    }
-
-    // 2) Fallback: App Bridge actions ResourcePicker (werkt in embedded apps)
-    const mod = await import("@shopify/app-bridge/actions");
-    const ResourcePicker = mod.ResourcePicker;
-
-    if (!ResourcePicker || !shopify) {
-      throw new Error("ResourcePicker or App Bridge instance missing");
-    }
-
-    // Probeer juiste resourceType (verschilt per versie)
-    const resourceType =
-      (ResourcePicker.ResourceType && (ResourcePicker.ResourceType.ProductVariant || ResourcePicker.ResourceType.Variant)) ||
-      "ProductVariant";
-
-    const picker = ResourcePicker.create(shopify, {
-      resourceType,
-      options: { selectMultiple: true },
-    });
-
-    let handled = false;
-
-    picker.subscribe(ResourcePicker.Action.CANCEL, () => {
-      handled = true;
-    });
-
-    picker.subscribe(ResourcePicker.Action.SELECT, (payload) => {
-      if (handled) return;
-      handled = true;
-
-      const selection = payload?.selection || [];
-      const ids = (Array.isArray(selection) ? selection : [])
-        .map((r) => extractNumericId(r?.id))
-        .filter(Boolean);
-
-      if (ids.length) setter(toCsv(ids));
-
-      // netjes sluiten
-      try {
-        picker.dispatch(ResourcePicker.Action.CLOSE);
-      } catch {}
-    });
-
-    picker.dispatch(ResourcePicker.Action.OPEN);
-  } catch (err) {
-    console.error("[RavenRock] pickVariants failed:", err);
-    alert("Variant picker failed. Check console (F12) for details.");
+  function openVariantSelector(setter) {
+    setCurrentSetter(() => setter);
+    setVariantSelectorOpen(true);
   }
-}
 
+  function handleVariantSelect(variantIds) {
+    if (currentSetter && variantIds.length > 0) {
+      const numericIds = variantIds.map(id => extractNumericId(id));
+      currentSetter(toCsv(numericIds));
+    }
+  }
 
   return (
-    <div className="rr-admin">
-      <style>{`
-        :root{
-          --rr-bg:#f6f6f7;
-          --rr-card:#ffffff;
-          --rr-border:#e1e3e5;
-          --rr-text:#202223;
-          --rr-muted:#6d7175;
-          --rr-primary:#008060;
-          --rr-primary-dark:#006e52;
-          --rr-danger:#d72c0d;
-          --rr-radius:14px;
-        }
+    <Page 
+      title={t('pageTitle')}
+      narrowWidth
+    >
+      <BlockStack gap="500">
+        <Card>
+          <BlockStack gap="300">
+            <Text as="p" variant="bodyMd">
+              {t('pageDescription')}
+            </Text>
+          </BlockStack>
+        </Card>
 
-        .rr-admin{
-          background:var(--rr-bg);
-          color:var(--rr-text);
-          min-height:100vh;
-          padding:24px 18px;
-          font-family: -apple-system,BlinkMacSystemFont,"San Francisco","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-        }
+        <Form method="post">
+          <BlockStack gap="500">
+            {/* Upsell Selection */}
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">{t('upsellSelection')}</Text>
 
-        .rr-wrap{
-          max-width: 980px;
-          margin: 0 auto;
-        }
-
-        .rr-top{
-          display:flex;
-          justify-content:space-between;
-          align-items:flex-start;
-          gap:16px;
-          margin-bottom:16px;
-        }
-
-        .rr-title{
-          font-size:22px;
-          font-weight:700;
-          margin:0;
-          line-height:1.2;
-        }
-
-        .rr-sub{
-          margin:6px 0 0;
-          color:var(--rr-muted);
-          font-size:14px;
-          line-height:1.35;
-        }
-
-        .rr-actions{
-          display:flex;
-          gap:10px;
-          align-items:center;
-        }
-
-        .rr-btn{
-          border:1px solid var(--rr-border);
-          background:#fff;
-          color:var(--rr-text);
-          padding:10px 14px;
-          border-radius:12px;
-          font-weight:600;
-          cursor:pointer;
-          font-size:14px;
-        }
-        .rr-btn:hover{ filter:brightness(0.98); }
-
-        .rr-btn-primary{
-          background:var(--rr-primary);
-          border-color:var(--rr-primary);
-          color:#fff;
-        }
-        .rr-btn-primary:hover{ background:var(--rr-primary-dark); }
-
-        .rr-btn-danger{
-          border-color:rgba(215,44,13,.25);
-          color:var(--rr-danger);
-          background:#fff;
-        }
-
-        .rr-grid{
-          display:grid;
-          grid-template-columns: 1.1fr 0.9fr;
-          gap:16px;
-        }
-        @media (max-width: 920px){
-          .rr-grid{ grid-template-columns: 1fr; }
-        }
-
-        .rr-card{
-          background:var(--rr-card);
-          border:1px solid var(--rr-border);
-          border-radius: var(--rr-radius);
-          padding:16px;
-          box-shadow: 0 1px 0 rgba(0,0,0,0.02);
-        }
-
-        .rr-card h3{
-          margin:0 0 12px;
-          font-size:16px;
-          font-weight:700;
-        }
-
-        .rr-field{ margin-bottom:14px; }
-        .rr-label{
-          display:flex;
-          justify-content:space-between;
-          align-items:center;
-          gap:10px;
-          font-weight:600;
-          font-size:14px;
-          margin-bottom:6px;
-        }
-        .rr-help{
-          color:var(--rr-muted);
-          font-size:12.5px;
-          line-height:1.35;
-          margin-top:6px;
-        }
-
-        .rr-input, .rr-select, .rr-textarea{
-          width:100%;
-          border:1px solid var(--rr-border);
-          border-radius:12px;
-          padding:10px 12px;
-          font-size:14px;
-          background:#fff;
-          outline:none;
-        }
-        .rr-textarea{ min-height:92px; resize:vertical; }
-        .rr-input:focus, .rr-select:focus, .rr-textarea:focus{
-          border-color: rgba(0,128,96,.6);
-          box-shadow: 0 0 0 3px rgba(0,128,96,.12);
-        }
-
-        .rr-row{
-          display:flex;
-          gap:10px;
-          flex-wrap:wrap;
-          align-items:center;
-        }
-
-        .rr-pill{
-          font-size:12px;
-          color:var(--rr-muted);
-          background:#f1f2f3;
-          border:1px solid var(--rr-border);
-          padding:6px 10px;
-          border-radius:999px;
-        }
-
-        .rr-toggle{
-          display:flex;
-          align-items:flex-start;
-          gap:10px;
-          padding:10px 12px;
-          border:1px solid var(--rr-border);
-          border-radius:12px;
-          background:#fff;
-        }
-        .rr-toggle input{ margin-top:3px; }
-        .rr-toggle-title{ font-weight:650; font-size:14px; margin:0; }
-        .rr-toggle-sub{ margin:4px 0 0; color:var(--rr-muted); font-size:12.5px; line-height:1.35; }
-        
-        .rr-footer{
-          display:flex;
-          justify-content:flex-end;
-          margin-top:14px;
-        }
-
-        .rr-note{
-          border-left:4px solid rgba(0,128,96,.5);
-          background: rgba(0,128,96,.06);
-          padding:10px 12px;
-          border-radius:12px;
-          color:var(--rr-text);
-          font-size:13px;
-          line-height:1.35;
-        }
-      `}</style>
-
-      <div className="rr-wrap">
-        <div className="rr-top">
-          <div>
-            <h1 className="rr-title">RavenRock Upsell — Settings</h1>
-            <p className="rr-sub">
-              Configureer hoe upsells worden gekozen. Gebruik de “Pick” knoppen om varianten te selecteren zonder IDs te plakken.
-            </p>
-          </div>
-
-          <div className="rr-actions">
-            <button
-              type="button"
-              className="rr-btn"
-              onClick={() => {
-                // reset UI naar opgeslagen defaults (snelle rescue)
-                setUpsellMode(settings.upsellMode || "collection");
-                setManualVariantIds(settings.manualVariantIds || "");
-                setFallbackVariantIds(settings.fallbackVariantIds || "");
-                setLimit(Number(settings.limit || 3));
-                setExcludeGiftCards(!!settings.excludeGiftCards);
-                setExcludeOutOfStock(!!settings.excludeOutOfStock);
-              }}
-            >
-              Reset (UI)
-            </button>
-            <button type="submit" form="rr-settings-form" className="rr-btn rr-btn-primary">
-              Save
-            </button>
-          </div>
-        </div>
-
-        <Form id="rr-settings-form" method="post">
-          <div className="rr-grid">
-            <div className="rr-card">
-              <h3>Upsell selection</h3>
-
-              <div className="rr-field">
-                <div className="rr-label">
-                  <span>Upsell mode</span>
-                  <span className="rr-pill">{upsellMode === "manual" ? "Manual" : "Collection"}</span>
-                </div>
-
-                <select
-                  className="rr-select"
+                <Select
+                  label={t('upsellMode')}
                   name="upsellMode"
+                  options={[
+                    { label: t('upsellModeCollection'), value: "collection" },
+                    { label: t('upsellModeManual'), value: "manual" },
+                  ]}
                   value={upsellMode}
-                  onChange={(e) => setUpsellMode(e.target.value)}
-                >
-                  <option value="collection">collection</option>
-                  <option value="manual">manual</option>
-                </select>
-
-                <div className="rr-help">
-                  <b>collection</b> = probeer dezelfde collectie als het product. <b>manual</b> = gebruik jouw gekozen variant lijst.
-                </div>
-              </div>
-
-              <div className="rr-field">
-                <div className="rr-label">
-                  <span>Manual variant IDs (csv)</span>
-                  <span className="rr-pill">{countCsv(manualVariantIds)} selected</span>
-                </div>
-
-                <div className="rr-row" style={{ marginBottom: 8 }}>
-                  <button
-                    type="button"
-                    className="rr-btn rr-btn-primary"
-                    onClick={() => pickVariants(setManualVariantIds)}
-                  >
-                    Pick manual variants
-                  </button>
-                  <button
-                    type="button"
-                    className="rr-btn rr-btn-danger"
-                    onClick={() => setManualVariantIds("")}
-                  >
-                    Clear
-                  </button>
-                </div>
-
-                <textarea
-                  className="rr-textarea"
-                  name="manualVariantIds"
-                  rows={3}
-                  value={manualVariantIds}
-                  onChange={(e) => setManualVariantIds(e.target.value)}
-                  placeholder="Klik op ‘Pick manual variants’ (geen IDs plakken)"
+                  onChange={(value) => setUpsellMode(value)}
+                  helpText={
+                    upsellMode === "collection"
+                      ? t('upsellModeCollectionHelp')
+                      : t('upsellModeManualHelp')
+                  }
                 />
 
-                <div className="rr-help">
-                  Tip: zet <b>Upsell mode = manual</b> om deze lijst te gebruiken.
-                </div>
-              </div>
+                <BlockStack gap="400">
+                  <BlockStack gap="200">
+                    <TextField
+                      label={t('manualVariantIds')}
+                      name="manualVariantIds"
+                      value={manualVariantIds}
+                      onChange={setManualVariantIds}
+                      multiline={2}
+                      autoComplete="off"
+                      helpText={`${countCsv(manualVariantIds)} ${t('manualVariantIdsHelp')}`}
+                      disabled={upsellMode !== "manual"}
+                      readOnly
+                    />
+                    <InlineStack gap="200">
+                      <Button 
+                        onClick={() => openVariantSelector(setManualVariantIds)}
+                        disabled={upsellMode !== "manual"}
+                      >
+                        {t('pickVariants')}
+                      </Button>
+                      <Button 
+                        tone="critical" 
+                        onClick={() => setManualVariantIds("")}
+                        disabled={!manualVariantIds}
+                      >
+                        {t('clear')}
+                      </Button>
+                    </InlineStack>
+                  </BlockStack>
 
-              <div className="rr-field">
-                <div className="rr-label">
-                  <span>Fallback variant IDs (csv)</span>
-                  <span className="rr-pill">{countCsv(fallbackVariantIds)} selected</span>
-                </div>
+                  <BlockStack gap="200">
+                    <TextField
+                      label={t('fallbackVariantIds')}
+                      name="fallbackVariantIds"
+                      value={fallbackVariantIds}
+                      onChange={setFallbackVariantIds}
+                      multiline={2}
+                      autoComplete="off"
+                      helpText={`${countCsv(fallbackVariantIds)} ${t('fallbackVariantIdsHelp')}`}
+                      readOnly
+                    />
+                    <InlineStack gap="200">
+                      <Button 
+                        onClick={() => openVariantSelector(setFallbackVariantIds)}
+                        disabled={upsellMode !== "manual"}
+                      >
+                        {t('pickVariants')}
+                      </Button>
+                      <Button 
+                        tone="critical" 
+                        onClick={() => setFallbackVariantIds("")} 
+                        disabled={!fallbackVariantIds}
+                      >
+                        {t('clear')}
+                      </Button>
+                    </InlineStack>
+                  </BlockStack>
+                </BlockStack>
+              </BlockStack>
+            </Card>
 
-                <div className="rr-row" style={{ marginBottom: 8 }}>
-                  <button
-                    type="button"
-                    className="rr-btn rr-btn-primary"
-                    onClick={() => pickVariants(setFallbackVariantIds)}
-                  >
-                    Pick fallback variants
-                  </button>
-                  <button
-                    type="button"
-                    className="rr-btn rr-btn-danger"
-                    onClick={() => setFallbackVariantIds("")}
-                  >
-                    Clear
-                  </button>
-                </div>
+            {/* AI Recommendations */}
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">{t('aiRecommendations')}</Text>
+                
+                <input 
+                  type="hidden" 
+                  name="aiEnabled" 
+                  value={aiEnabled ? "true" : "false"} 
+                />
+                <Checkbox
+                  label={t('aiEnable')}
+                  checked={aiEnabled}
+                  onChange={setAiEnabled}
+                  helpText={t('aiEnableHelp')}
+                />
+                
+                {aiEnabled && (
+                  <BlockStack gap="400">
+                    <Box 
+                      padding="400" 
+                      background="bg-surface-secondary" 
+                      borderRadius="200"
+                    >
+                      <BlockStack gap="300">
+                        <Text as="p" variant="bodyMd" tone="subdued">
+                          {t('aiCallsUsed')} <Text as="span" fontWeight="semibold">{settings.aiCallsThisMonth || 0}</Text> / {aiMonthlyLimit}
+                        </Text>
+                        <div style={{ 
+                          width: '100%', 
+                          height: '8px', 
+                          background: '#e0e0e0', 
+                          borderRadius: '4px',
+                          overflow: 'hidden'
+                        }}>
+                          <div style={{ 
+                            width: `${Math.min(((settings.aiCallsThisMonth || 0) / aiMonthlyLimit) * 100, 100)}%`, 
+                            height: '100%', 
+                            background: '#008060',
+                            transition: 'width 0.3s ease'
+                          }} />
+                        </div>
+                      </BlockStack>
+                    </Box>
+                    
+                    <TextField
+                      label={t('aiMonthlyLimit')}
+                      name="aiMonthlyLimit"
+                      type="number"
+                      min={100}
+                      max={100000}
+                      value={String(aiMonthlyLimit)}
+                      onChange={(v) => setAiMonthlyLimit(Number(v))}
+                      helpText={t('aiMonthlyLimitHelp')}
+                    />
+                    
+                    <Select
+                      label={t('aiFallbackMode')}
+                      name="aiFallbackMode"
+                      options={[
+                        { label: t('upsellModeCollection'), value: "collection" },
+                        { label: t('upsellModeManual'), value: "manual" },
+                      ]}
+                      value={aiFallbackMode}
+                      onChange={setAiFallbackMode}
+                      helpText={t('aiFallbackModeHelp')}
+                    />
+                    
+                    <TextField
+                      label={t('aiMessageText')}
+                      name="aiMessageText"
+                      value={aiMessageText}
+                      onChange={setAiMessageText}
+                      placeholder={t('aiMessageTextPlaceholder')}
+                      helpText={t('aiMessageTextHelp')}
+                      autoComplete="off"
+                    />
 
-                <textarea
-                  className="rr-textarea"
-                  name="fallbackVariantIds"
-                  rows={3}
-                  value={fallbackVariantIds}
-                  onChange={(e) => setFallbackVariantIds(e.target.value)}
-                  placeholder="Klik op ‘Pick fallback variants’"
+                    <TextField
+                      label={t('fallbackMessageText')}
+                      name="fallbackMessageText"
+                      value={fallbackMessageText}
+                      onChange={setFallbackMessageText}
+                      placeholder={t('fallbackMessageTextPlaceholder')}
+                      helpText={t('fallbackMessageTextHelp')}
+                      autoComplete="off"
+                    />
+                    
+                    <CalloutCard
+                      title={t('aiComingSoon')}
+                      illustration="https://cdn.shopify.com/s/files/1/0757/9955/files/empty-state.svg"
+                      primaryAction={{
+                        content: t('learnMore'),
+                        url: '#',
+                      }}
+                    >
+                      <p>
+                        {t('aiComingSoonText')}
+                      </p>
+                    </CalloutCard>
+                  </BlockStack>
+                )}
+              </BlockStack>
+            </Card>
+
+            {/* Display Rules */}
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">{t('displayRules')}</Text>
+
+                <TextField
+                  label={t('maxRecommendations')}
+                  name="limit"
+                  type="number"
+                  min={1}
+                  max={6}
+                  value={String(limit)}
+                  onChange={(v) => setLimit(Number(v))}
+                  helpText={t('maxRecommendationsHelp')}
                 />
 
-                <div className="rr-help">
-                  Fallback wordt gebruikt als de collection flow niets oplevert (MVP-safe).
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <div className="rr-card" style={{ marginBottom: 16 }}>
-                <h3>Rules</h3>
-
-                <div className="rr-field">
-                  <div className="rr-label">
-                    <span>Limit (1–6)</span>
-                    <span className="rr-pill">{limit}</span>
-                  </div>
-                  <input
-                    className="rr-input"
-                    name="limit"
-                    type="number"
-                    min={1}
-                    max={6}
-                    value={limit}
-                    onChange={(e) => setLimit(Number(e.target.value))}
+                <BlockStack gap="200">
+                  <input 
+                    type="hidden" 
+                    name="excludeGiftCards" 
+                    value={excludeGiftCards ? "true" : "false"} 
                   />
-                  <div className="rr-help">Maximaal aantal upsells dat je widget toont.</div>
-                </div>
-
-                <label className="rr-toggle">
-                  <input
-                    name="excludeGiftCards"
-                    type="checkbox"
+                  <Checkbox
+                    label={t('excludeGiftCards')}
                     checked={excludeGiftCards}
-                    onChange={(e) => setExcludeGiftCards(e.target.checked)}
+                    onChange={setExcludeGiftCards}
                   />
-                  <div>
-                    <p className="rr-toggle-title">Exclude gift cards</p>
-                    <p className="rr-toggle-sub">Filter gift cards uit de aanbevelingen.</p>
-                  </div>
-                </label>
-
-                <div style={{ height: 10 }} />
-
-                <label className="rr-toggle">
-                  <input
-                    name="excludeOutOfStock"
-                    type="checkbox"
+                  <input 
+                    type="hidden" 
+                    name="excludeOutOfStock" 
+                    value={excludeOutOfStock ? "true" : "false"} 
+                  />
+                  <Checkbox
+                    label={t('excludeOutOfStock')}
                     checked={excludeOutOfStock}
-                    onChange={(e) => setExcludeOutOfStock(e.target.checked)}
+                    onChange={setExcludeOutOfStock}
                   />
-                  <div>
-                    <p className="rr-toggle-title">Exclude out of stock</p>
-                    <p className="rr-toggle-sub">Toon alleen varianten die op voorraad zijn.</p>
-                  </div>
-                </label>
+                  <input 
+                    type="hidden" 
+                    name="redirectToCart" 
+                    value={redirectToCart ? "true" : "false"} 
+                  />
+                  <Checkbox
+                    label={t('redirectToCart')}
+                    checked={redirectToCart}
+                    onChange={setRedirectToCart}
+                  />
+                </BlockStack>
+              </BlockStack>
+            </Card>
 
-                <div className="rr-footer">
-                  <button type="submit" className="rr-btn rr-btn-primary">
-                    Save
-                  </button>
-                </div>
-              </div>
+            {/* Widget Language */}
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">{t('widgetLanguage')}</Text>
+                
+                <Select
+                  label={t('widgetLanguageLabel')}
+                  name="widgetLocale"
+                  options={localeOptions}
+                  value={widgetLocale}
+                  onChange={setWidgetLocale}
+                  helpText={t('widgetLanguageHelp')}
+                />
+                
+                <Text as="p" variant="bodyMd" tone="subdued">
+                  {t('widgetLanguageInfo')} ({shopLocale.toUpperCase()}) {t('widgetLanguageInfoSuffix')}
+                </Text>
+              </BlockStack>
+            </Card>
 
-              <div className="rr-note">
-                <b>Smoke test (1 minuut):</b><br />
-                1) Kies <b>manual</b> → Pick 2 varianten → Save<br />
-                2) Ga naar een productpagina → open RavenRock widget → Add to cart
-              </div>
-            </div>
-          </div>
+            {/* Save Actions */}
+            <InlineStack align="end" gap="200">
+              <Button 
+                onClick={() => {
+                  setUpsellMode(settings.upsellMode || "collection");
+                  setManualVariantIds(settings.manualVariantIds || "");
+                  setFallbackVariantIds(settings.fallbackVariantIds || "");
+                  setLimit(Number(settings.limit || 3));
+                  setExcludeGiftCards(!!settings.excludeGiftCards);
+                  setExcludeOutOfStock(!!settings.excludeOutOfStock);
+                  setRedirectToCart(settings.redirectToCart !== false);
+                  setAiEnabled(!!settings.aiEnabled);
+                  setAiMonthlyLimit(settings.aiMonthlyLimit || 1000);
+                  setAiFallbackMode(settings.aiFallbackMode || "collection");
+                  setAiMessageText(settings.aiMessageText || "Based on your browsing, we think you'll love these");
+                  setFallbackMessageText(settings.fallbackMessageText || "You might also like");
+                  setWidgetLocale(settings.widgetLocale || "auto");
+                }}
+              >                
+                {t('reset')}
+              </Button>
+              <Button 
+                variant="primary" 
+                submit
+                loading={navigation.state === "submitting"}
+              >
+                {t('saveSettings')}
+              </Button>
+            </InlineStack>
+          </BlockStack>
         </Form>
-      </div>
-    </div>
+
+        <VariantSelector
+          open={variantSelectorOpen}
+          onClose={() => setVariantSelectorOpen(false)}
+          onSelect={handleVariantSelect}
+          shopify={shopify}
+        />
+      </BlockStack>
+    </Page>
   );
 }
-
-
