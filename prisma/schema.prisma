@@ -48,6 +48,7 @@ model Settings {
   aiEnabled           Boolean  @default(false)
   aiMonthlyLimit      Int      @default(1000)
   aiCallsThisMonth    Int      @default(0)
+  aiUsageMonth        String   @default("") // bijv. "2026-02" voor maand-reset
   aiFallbackMode      String   @default("collection")
   aiMessageText       String   @default("Based on your browsing, we think you'll love these")
   fallbackMessageText String   @default("You might also like")
