@@ -37,35 +37,33 @@
   }
 
   // Laad vertalingen
- // Laad vertalingen
-async function loadTranslations(locale) {
-  const lang = locale?.toLowerCase().startsWith('nl') ? 'nl' : 'en';
-  
-  try {
-    const res = await fetch(`/apps/ravenrock/translations?locale=${lang}`);
-    if (res.ok) {
-      TRANSLATIONS = await res.json();
+  async function loadTranslations(locale) {
+    const lang = locale?.toLowerCase().startsWith('nl') ? 'nl' : 'en';
+    
+    try {
+      const res = await fetch(`/apps/ravenrock/translations?locale=${lang}`);
+      if (res.ok) {
+        TRANSLATIONS = await res.json();
+      }
+    } catch (err) {
+      console.warn('[RavenRock] Could not load translations:', err);
+      // Fallback vertalingen
+      TRANSLATIONS = {
+        modal_title: "RavenRock Upsell",
+        recommended_addons: "Recommended add-ons:",
+        add: "Add",
+        added: "Added ✓",
+        adding: "Adding…",
+        loading: "Loading…",
+        fetching: "Fetching upsells",
+        no_recommendations: "No recommendations yet",
+        select_variants: "Select variants in the app settings.",
+        load_failed: "Could not load upsells",
+        check_console: "Open console for details",
+        close: "Close"
+      };
     }
-  } catch (err) {
-    console.warn('[RavenRock] Could not load translations:', err);
-    // Fallback vertalingen
-    TRANSLATIONS = {
-      modal_title: "RavenRock Upsell",
-      recommended_addons: "Recommended add-ons:",
-      add: "Add",
-      added: "Added ✓",
-      adding: "Adding…",
-      loading: "Loading…",
-      fetching: "Fetching upsells",
-      no_recommendations: "No recommendations yet",
-      select_variants: "Select variants in the app settings.",
-      load_failed: "Could not load upsells",
-      check_console: "Open console for details",
-      close: "Close"
-    };
   }
-}
-
 
   // UI
   const btn = document.createElement("button");
@@ -82,10 +80,6 @@ async function loadTranslations(locale) {
   modal.hidden = true;
 
   document.body.append(btn, backdrop, modal);
-
-  const closeBtn = document.createElement("button");
-  closeBtn.className = "rr-close";
-  closeBtn.type = "button";
 
   function renderModal() {
     modal.innerHTML = `
@@ -127,7 +121,7 @@ async function loadTranslations(locale) {
     const shop = getShopDomain();
     if (shop) params.set("shop", shop);
 
-   const url = PROXY_PATH + "/recommendations?" + params.toString();
+    const url = PROXY_PATH + "/recommendations?" + params.toString();
 
     const res = await fetch(url, {
       credentials: "same-origin",
@@ -177,7 +171,6 @@ async function loadTranslations(locale) {
       if (data.locale) {
         LOCALE = data.locale;
         await loadTranslations(LOCALE);
-        renderModal(); // Re-render met nieuwe vertalingen
       }
       
       if (data.meta && typeof data.meta.redirectToCart === 'boolean') {
@@ -185,14 +178,13 @@ async function loadTranslations(locale) {
       }
       
       let items = Array.isArray(data.items) ? data.items : [];
-
-      // Filter out-of-stock items
-      const excludeOutOfStock = data.meta?.excludeOutOfStock;
-      if (excludeOutOfStock) {
-        items = items.filter(it => !it.isSoldOut);
-      }
-
       items = items.slice(0, LIMIT);
+
+      // Update modal teksten met nieuwe vertalingen
+      const titleEl = modal.querySelector('.rr-title');
+      const subtitleEl = modal.querySelector('.rr-subtitle');
+      if (titleEl) titleEl.textContent = t('modal_title');
+      if (subtitleEl) subtitleEl.textContent = t('recommended_addons');
 
       if (!items.length) {
         cardsEl.innerHTML = `
@@ -238,13 +230,56 @@ async function loadTranslations(locale) {
           b.textContent = t('added');
           
           if (REDIRECT_TO_CART) {
-            window.location.href = root + "cart";
-          } else {
-            if (window.Shopify && window.Shopify.theme && window.Shopify.theme.cart) {
-              window.Shopify.theme.cart.getState();
-            }
-            document.dispatchEvent(new CustomEvent('cart:updated'));
+  // Redirect naar cart pagina
+  window.location.href = root + "cart";
+} else {
+  // Update cart zonder redirect
+  fetch(root + 'cart.js', {
+    credentials: 'same-origin',
+    headers: { 'Accept': 'application/json' }
+  })
+  .then(r => r.json())
+  .then(cart => {
+    // Dawn theme: update cart drawer
+    const cartDrawer = document.querySelector('cart-drawer');
+    if (cartDrawer && typeof cartDrawer.renderContents === 'function') {
+      fetch(root + 'cart?section_id=cart-drawer')
+        .then(r => r.text())
+        .then(html => {
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, 'text/html');
+          const newDrawer = doc.querySelector('cart-drawer');
+          if (newDrawer) {
+            cartDrawer.innerHTML = newDrawer.innerHTML;
+            cartDrawer.classList.remove('is-empty');
           }
+        });
+    }
+    
+    // Update cart icon bubble
+    const cartIconBubble = document.querySelector('cart-icon-bubble') || 
+                          document.querySelector('.cart-count-bubble') ||
+                          document.querySelector('[data-cart-count]');
+    if (cartIconBubble) {
+      if (cartIconBubble.textContent !== undefined) {
+        cartIconBubble.textContent = cart.item_count;
+      }
+      if (cart.item_count > 0) {
+        cartIconBubble.classList.remove('hidden');
+      }
+    }
+    
+    // Fallback events voor andere themes
+    document.documentElement.dispatchEvent(
+      new CustomEvent('cart:refresh', { bubbles: true, detail: { cart } })
+    );
+    document.dispatchEvent(new CustomEvent('cart:updated', { detail: { cart } }));
+    
+    console.log('[RavenRock] Cart updated, item count:', cart.item_count);
+  })
+  .catch(err => console.warn('[RavenRock] Cart refresh failed:', err));
+}
+
         } catch (err) {
           console.error("[RavenRock] addToCart failed", err);
           alert(String(err.message || err));
