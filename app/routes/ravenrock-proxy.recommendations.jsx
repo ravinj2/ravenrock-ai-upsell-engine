@@ -27,15 +27,11 @@ function shuffle(arr) {
 }
 
 // Fallback IDs voor development/testing
-const DEV_FALLBACK_IDS = [
-  "42910497210458",
-  "42910497243226",
-  "42910497177690"
-];
+const DEV_FALLBACK_IDS = ["42910497210458", "42910497243226", "42910497177690"];
 
 export async function loader({ request }) {
-  console.log('[RavenRock DEBUG] Request received:', request.url);
-  
+  console.log("[RavenRock DEBUG] Request received:", request.url);
+
   const url = new URL(request.url);
 
   // Wat de widget meestuurt
@@ -69,8 +65,48 @@ export async function loader({ request }) {
         })
       : null;
 
-    const widgetLocale = settings?.widgetLocale || session?.locale || 'en';
-    const mode = String(settings?.upsellMode || "collection").toLowerCase();
+    const widgetLocale = settings?.widgetLocale || session?.locale || "en";
+
+    // ✅ Stap 2 wijziging: mode moet overschrijfbaar zijn (degrade naar fallback)
+    let mode = String(settings?.upsellMode || "collection").toLowerCase();
+
+    // ✅ Stap 2: AI ticks + maand-reset + degrade bij limiet
+    const now = new Date();
+    const monthKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+
+    const aiEnabled = settings?.aiEnabled === true;
+    const aiMonthlyLimit = Number(settings?.aiMonthlyLimit || 1000) || 1000;
+
+    let aiCallsThisMonth = Number(settings?.aiCallsThisMonth || 0) || 0;
+    let aiAllowed = aiEnabled ? true : false;
+    let aiDegraded = false;
+
+    if (aiEnabled) {
+      // maand-reset als de maand veranderd is
+      if ((settings?.aiUsageMonth || "") !== monthKey) {
+        const reset = await db.Settings.update({
+          where: { shop },
+          data: { aiUsageMonth: monthKey, aiCallsThisMonth: 0 },
+        });
+        aiCallsThisMonth = Number(reset.aiCallsThisMonth || 0) || 0;
+      }
+
+      // limiet check + tick increment (1 request = 1 tick)
+      aiAllowed = aiCallsThisMonth < aiMonthlyLimit;
+
+      if (aiAllowed) {
+        const inc = await db.Settings.update({
+          where: { shop },
+          data: { aiCallsThisMonth: { increment: 1 } },
+        });
+        aiCallsThisMonth = Number(inc.aiCallsThisMonth || 0) || 0;
+      } else {
+        // degrade naar fallback mode als ticks op zijn
+        const fallbackMode = String(settings?.aiFallbackMode || "collection").toLowerCase();
+        mode = fallbackMode;
+        aiDegraded = true;
+      }
+    }
 
     // Limit: als widget een limit meestuurt, zien we dat als "cap"
     const settingsLimit = Number(settings?.limit || 3);
@@ -83,7 +119,7 @@ export async function loader({ request }) {
     const fallbackIdsFromDb = parseIds(settings?.fallbackVariantIds);
     const fallbackIds = fallbackIdsFromDb.length ? fallbackIdsFromDb : DEV_FALLBACK_IDS;
 
-    // Manual IDs: eerst query override (legacy), anders uit DB
+    // Manual IDs: uit DB
     const manualIdsFromDb = parseIds(settings?.manualVariantIds);
     const manualIds = manualIdsFromDb;
 
@@ -184,11 +220,11 @@ export async function loader({ request }) {
               tracked
             }
             image { url altText }
-            product { 
-              title 
-              isGiftCard 
+            product {
+              title
+              isGiftCard
               tracksInventory
-              featuredImage { url altText } 
+              featuredImage { url altText }
             }
           }
         }
@@ -202,20 +238,21 @@ export async function loader({ request }) {
 
     // Respecteer je settings:
     const excludeOutOfStock = settings?.excludeOutOfStock !== false; // default true
-    const excludeGiftCards = settings?.excludeGiftCards !== false;   // default true
+    const excludeGiftCards = settings?.excludeGiftCards !== false; // default true
 
     // Filter gift cards EN out-of-stock
     let nodesFinal = nodesAll;
     if (excludeGiftCards) {
-      nodesFinal = nodesFinal.filter(v => !v.product?.isGiftCard);
+      nodesFinal = nodesFinal.filter((v) => !v.product?.isGiftCard);
     }
     if (excludeOutOfStock) {
-      nodesFinal = nodesFinal.filter(v => {
-        const isSoldOut = !v.availableForSale || 
-                          (v.inventoryItem?.tracked && (v.inventoryQuantity || 0) <= 0);
+      nodesFinal = nodesFinal.filter((v) => {
+        const isSoldOut =
+          !v.availableForSale || (v.inventoryItem?.tracked && (v.inventoryQuantity || 0) <= 0);
         return !isSoldOut;
       });
     }
+
     // Limiteer NA filtering
     nodesFinal = nodesFinal.slice(0, effectiveLimit);
 
@@ -223,8 +260,7 @@ export async function loader({ request }) {
     const items = nodesFinal.map((v) => {
       const variantId = v.id.split("/").pop();
       const variantTitle = (v.title || "").trim();
-      const niceVariant =
-        variantTitle && variantTitle !== "Default Title" ? ` — ${variantTitle}` : "";
+      const niceVariant = variantTitle && variantTitle !== "Default Title" ? ` — ${variantTitle}` : "";
 
       const title = `${v.product?.title || ""}${niceVariant}`.trim();
 
@@ -246,10 +282,22 @@ export async function loader({ request }) {
         usedCandidates: candidateIds.length,
         source:
           mode === "manual"
-            ? (manualIds.length ? "manual_db_or_query" : "fallback")
-            : (productHandle ? "collection_or_fallback" : "fallback"),
+            ? manualIds.length
+              ? "manual_db_or_query"
+              : "fallback"
+            : productHandle
+            ? "collection_or_fallback"
+            : "fallback",
         redirectToCart: settings?.redirectToCart !== false,
         excludeOutOfStock: settings?.excludeOutOfStock !== false,
+        ai: {
+          enabled: aiEnabled,
+          allowed: aiAllowed,
+          degraded: aiDegraded,
+          used: aiCallsThisMonth,
+          limit: aiMonthlyLimit,
+          monthKey,
+        },
       },
     });
   } catch (err) {
