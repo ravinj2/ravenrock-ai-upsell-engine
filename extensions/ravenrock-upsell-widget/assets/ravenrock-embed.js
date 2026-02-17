@@ -180,6 +180,60 @@
     modal.hidden = true;
   }
 
+  // === NEW: robust cart UI refresh (Dawn + fallback) ===
+  async function refreshCartUI() {
+    try {
+      const cartRes = await fetch(root + "cart.js", {
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+      });
+      const cart = await cartRes.json();
+
+      // Update bubble / count
+      const bubble =
+        document.querySelector("cart-icon-bubble") ||
+        document.querySelector(".cart-count-bubble") ||
+        document.querySelector("[data-cart-count]");
+
+      if (bubble) {
+        const countEl =
+          bubble.querySelector("[aria-hidden]") ||
+          bubble.querySelector(".cart-count-bubble") ||
+          bubble;
+
+        if (countEl) countEl.textContent = String(cart.item_count || 0);
+        bubble.classList.toggle("hidden", (cart.item_count || 0) <= 0);
+      }
+
+      // Dawn cart drawer refresh (if exists)
+      const cartDrawer = document.querySelector("cart-drawer");
+      if (cartDrawer) {
+        const html = await fetch(root + "cart?section_id=cart-drawer", {
+          credentials: "same-origin",
+        }).then((r) => r.text());
+
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const newDrawer = doc.querySelector("cart-drawer");
+        if (newDrawer) {
+          cartDrawer.innerHTML = newDrawer.innerHTML;
+          cartDrawer.classList.remove("is-empty");
+        }
+
+        if (typeof cartDrawer.open === "function") cartDrawer.open();
+      }
+
+      // Fallback events
+      document.documentElement.dispatchEvent(
+        new CustomEvent("cart:refresh", { bubbles: true, detail: { cart } })
+      );
+      document.dispatchEvent(new CustomEvent("cart:updated", { detail: { cart } }));
+
+      console.log("[RavenRock] Cart UI refreshed, item_count:", cart.item_count);
+    } catch (err) {
+      console.warn("[RavenRock] refreshCartUI failed:", err);
+    }
+  }
+
   function renderModal() {
     modal.innerHTML = `
       <div class="rr-header">
@@ -214,20 +268,8 @@
           if (REDIRECT_TO_CART) {
             window.location.href = root + "cart";
           } else {
-            // Best-effort cart refresh
-            fetch(root + "cart.js", {
-              credentials: "same-origin",
-              headers: { Accept: "application/json" },
-            })
-              .then((r) => r.json())
-              .then((cart) => {
-                document.documentElement.dispatchEvent(
-                  new CustomEvent("cart:refresh", { bubbles: true, detail: { cart } })
-                );
-                document.dispatchEvent(new CustomEvent("cart:updated", { detail: { cart } }));
-                console.log("[RavenRock] Cart updated, item count:", cart.item_count);
-              })
-              .catch((err) => console.warn("[RavenRock] Cart refresh failed:", err));
+            // ✅ FIX: refresh cart UI properly
+            await refreshCartUI();
           }
         } catch (err) {
           console.error("[RavenRock] addToCart failed", err);
