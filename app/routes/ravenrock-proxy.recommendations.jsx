@@ -133,10 +133,15 @@ export async function loader({ request }) {
 
     // -------- Kandidaten bepalen op basis van mode --------
     let candidateIds = [];
+let usedCollection = false;
+let usedManual = false;
 
-    if (mode === "manual") {
-      candidateIds = manualIds.length ? manualIds : fallbackIds;
-    } else {
+
+  if (mode === "manual") {
+  usedManual = manualIds.length > 0;
+  candidateIds = usedManual ? manualIds : fallbackIds;
+} else {
+
       // default: collection mode
       candidateIds = fallbackIds;
 
@@ -180,7 +185,10 @@ export async function loader({ request }) {
             .filter(Boolean)
             .map((gid) => gid.split("/").pop());
 
-          if (ids.length) candidateIds = ids;
+          if (ids.length) {
+  usedCollection = true;
+  candidateIds = ids;
+}
         }
       }
     }
@@ -254,7 +262,13 @@ export async function loader({ request }) {
     }
 
     // Limiteer NA filtering
-    nodesFinal = nodesFinal.slice(0, effectiveLimit);
+   nodesFinal = nodesFinal.slice(0, effectiveLimit);
+
+const reasonKey = usedManual
+  ? "handpicked"
+  : usedCollection
+    ? "same_collection"
+    : "store_picks";
 
     // Map naar items (zonder isSoldOut, want alles is beschikbaar)
     const items = nodesFinal.map((v) => {
@@ -264,12 +278,14 @@ export async function loader({ request }) {
 
       const title = `${v.product?.title || ""}${niceVariant}`.trim();
 
-      return {
-        variantId,
-        title,
-        price: v.price ? String(v.price) : "",
-        imageUrl: v.image?.url || v.product?.featuredImage?.url || null,
-      };
+     return {
+  variantId,
+  title,
+  price: v.price ? String(v.price) : "",
+  imageUrl: v.image?.url || v.product?.featuredImage?.url || null,
+  reasonKey,
+};
+
     });
 
     // meta is alleen voor jouw debug/test (widget negeert dit)
@@ -297,6 +313,9 @@ export async function loader({ request }) {
           used: aiCallsThisMonth,
           limit: aiMonthlyLimit,
           monthKey,
+          reasonKey,
+usedCollection,
+usedManual,
         },
       },
     });

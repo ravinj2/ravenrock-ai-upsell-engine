@@ -11,6 +11,9 @@
     "load_failed": "Could not load upsells",
     "check_console": "Open console for details",
     "close": "Close",
-    "recommendationText": "Recommended Product!"
+    "recommendationText": "Recommended Product!",
+    "reason_handpicked": "Handpicked by the store",
+  "reason_same_collection": "From the same collection",
+  "reason_store_picks": "Store picks" 
 }
 

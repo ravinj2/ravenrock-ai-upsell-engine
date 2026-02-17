@@ -12,6 +12,9 @@
     "load_failed": "Kon upsells niet laden",
     "check_console": "Open console voor details",
     "close": "Sluiten",
-    "recommendationText": "Aanbevolen product!"
+    "recommendationText": "Aanbevolen product!",
+      "reason_handpicked": "Door de winkel geselecteerd",
+  "reason_same_collection": "Uit dezelfde collectie",
+  "reason_store_picks": "Winkel favorieten"
   }
 
