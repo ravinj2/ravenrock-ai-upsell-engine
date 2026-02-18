@@ -1,23 +1,17 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
 
-// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
-// enough when changing adapters.
-// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
 datasource db {
   provider = "sqlite"
-  url      = "file:dev.sqlite"
+  url      = env("DATABASE_URL")
 }
 
 model Session {
-  id            String    @id
+  id            String   @id
   shop          String
   state         String
-  isOnline      Boolean   @default(false)
+  isOnline      Boolean  @default(false)
   scope         String?
   expires       DateTime?
   accessToken   String
@@ -25,10 +19,10 @@ model Session {
   firstName     String?
   lastName      String?
   email         String?
-  accountOwner  Boolean   @default(false)
+  accountOwner  Boolean  @default(false)
   locale        String?
-  collaborator  Boolean?  @default(false)
-  emailVerified Boolean?  @default(false)
+  collaborator  Boolean? @default(false)
+  emailVerified Boolean? @default(false)
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
@@ -36,6 +30,7 @@ model Session {
 model Settings {
   id                  String   @id @default(cuid())
   shop                String   @unique
+
   upsellMode          String   @default("collection")
   manualVariantIds    String   @default("")
   fallbackVariantIds  String   @default("")
@@ -43,19 +38,42 @@ model Settings {
   excludeGiftCards    Boolean  @default(false)
   excludeOutOfStock   Boolean  @default(false)
   redirectToCart      Boolean  @default(true)
-  
+
   // AI Recommendations
   aiEnabled           Boolean  @default(false)
   aiMonthlyLimit      Int      @default(1000)
   aiCallsThisMonth    Int      @default(0)
-  aiUsageMonth        String   @default("") // bijv. "2026-02" voor maand-reset
+  aiUsageMonth        String   @default("")
   aiFallbackMode      String   @default("collection")
   aiMessageText       String   @default("Based on your browsing, we think you'll love these")
   fallbackMessageText String   @default("You might also like")
-  
+
   // Localization
-  widgetLocale        String?  // null = auto (use shop locale)
-  
+  widgetLocale        String?
+
+  // Widget timing / trigger
+  triggerType         String   @default("time")
+  triggerDelaySec     Int      @default(20)
+
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
+}
+
+model WidgetEvent {
+  id              String   @id @default(cuid())
+  shop            String
+  type            String
+  sessionId        String?
+  path            String?
+  productHandle    String?
+  currentVariant   String?
+  upsellVariant    String?
+  count            Int?
+  trigger          String?
+  analyticsAllowed Boolean?
+  meta             String   @default("{}")
+  createdAt        DateTime @default(now())
+
+  @@index([shop, createdAt])
+  @@index([shop, type, createdAt])
 }

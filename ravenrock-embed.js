@@ -558,49 +558,51 @@
     }
   }
 
-  // === DEBUG MODE ===
-const DEBUG = window.location.search.includes('rr_debug=1');
-function rrLog(...args) {
-  if (DEBUG) console.log('[RavenRock DEBUG]', ...args);
-}
-
   // Initialiseer
-(async function init() {
-  const path = location.pathname || "";
+  (async function init() {
+    const path = location.pathname || "";
+    // DEBUG: Clear old frequency lock for development
+    if (localStorage.getItem(RR_NEXT_ALLOWED_KEY)) {
+      const nextAt = Number(localStorage.getItem(RR_NEXT_ALLOWED_KEY)) || 0;
+      if (nextAt < Date.now()) {
+        // Already expired, clear it
+        localStorage.removeItem(RR_NEXT_ALLOWED_KEY);
+      }
+    }
+    if (path.startsWith("/cart") || path.includes("/checkout") || path.startsWith("/checkouts/")) {
+      btn.hidden = true;
+      return;
+    }
 
-  if (path.startsWith("/cart") || path.includes("/checkout") || path.startsWith("/checkouts/")) {
-    btn.hidden = true;
-    return;
-  }
+    if (path.startsWith("/products/")) {
+      markProductSeen();
 
-  // ✅ Haal config EERST op
-  RR_CONFIG = await fetchRRConfig();
+      // ✅ belangrijk: start timer “vanaf default selectie” (werkt ook zonder events)
+      markProductSelected();
 
-  if (RR_CONFIG.locale) LOCALE = RR_CONFIG.locale;
-  if (typeof RR_CONFIG.redirectToCart === "boolean") {
-    REDIRECT_TO_CART = RR_CONFIG.redirectToCart;
-  }
+      // ✅ reset timer als variant wijzigt
+      watchVariantSelection();
+    }
 
-  await loadTranslations(LOCALE || "en");
-  renderModal();
+    RR_CONFIG = await fetchRRConfig();
 
-  // ✅ Dan pas product tracking + trigger
-  if (path.startsWith("/products/")) {
-    markProductSeen();
-    markProductSelected();
-    watchVariantSelection();
-    setupTrigger(); // ✅ NU pas aanroepen
-  }
+    if (RR_CONFIG.locale) LOCALE = RR_CONFIG.locale;
+    if (typeof RR_CONFIG.redirectToCart === "boolean") {
+      REDIRECT_TO_CART = RR_CONFIG.redirectToCart;
+    }
 
-  console.log("[RavenRock] Init", {
-    path,
-    nextAllowedAt: getNextAllowedAt(),
-    seenProduct: hasSeenProduct(),
-    selectedAt: getSelectedAtMs(),
-    triggerDelaySec: RR_CONFIG.triggerDelaySec,
-    upsellDelaySec: RR_CONFIG.upsellDelaySec,
-    autoOpen: RR_CONFIG.autoOpen,
-    isAllowed: isAllowedNow(),
-  });
-})();
+    await loadTranslations(LOCALE || "en");
+    renderModal();
+    setupTrigger();
+
+    console.log("[RavenRock] Init", {
+      path,
+      nextAllowedAt: getNextAllowedAt(),
+      seenProduct: hasSeenProduct(),
+      selectedAt: getSelectedAtMs(),
+      triggerDelaySec: RR_CONFIG.triggerDelaySec,
+      upsellDelaySec: RR_CONFIG.upsellDelaySec,
+      autoOpen: RR_CONFIG.autoOpen,
+    });
+  })();
 })();

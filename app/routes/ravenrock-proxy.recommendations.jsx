@@ -49,7 +49,7 @@ export async function loader({ request }) {
 
     // Settings ophalen (en als ze nog niet bestaan: default record maken)
     const settings = shop
-      ? await db.Settings.upsert({
+      ? await db.settings.upsert({
           where: { shop },
           update: {},
           create: {
@@ -84,7 +84,7 @@ export async function loader({ request }) {
     if (aiEnabled) {
       // maand-reset als de maand veranderd is
       if ((settings?.aiUsageMonth || "") !== monthKey) {
-        const reset = await db.Settings.update({
+        const reset = await db.settings.update({
           where: { shop },
           data: { aiUsageMonth: monthKey, aiCallsThisMonth: 0 },
         });
@@ -95,7 +95,7 @@ export async function loader({ request }) {
       aiAllowed = aiCallsThisMonth < aiMonthlyLimit;
 
       if (aiAllowed) {
-        const inc = await db.Settings.update({
+        const inc = await db.settings.update({
           where: { shop },
           data: { aiCallsThisMonth: { increment: 1 } },
         });
@@ -121,207 +121,98 @@ export async function loader({ request }) {
 
     // Manual IDs: uit DB
     const manualIdsFromDb = parseIds(settings?.manualVariantIds);
-    const manualIds = manualIdsFromDb;
 
-    // Als merchant nog niets heeft ingesteld, geen "magische" upsells tonen
-    if (mode === "manual" && manualIds.length === 0) {
-      return jsonResponse({ items: [], meta: { mode, source: "no_manual_config" } });
-    }
-    if (mode !== "manual" && fallbackIds.length === 0 && !productHandle) {
-      return jsonResponse({ items: [], meta: { mode, source: "no_fallback_config" } });
-    }
-
-    // -------- Kandidaten bepalen op basis van mode --------
-    let candidateIds = [];
-let usedCollection = false;
-let usedManual = false;
-
-
-  if (mode === "manual") {
-  usedManual = manualIds.length > 0;
-  candidateIds = usedManual ? manualIds : fallbackIds;
-} else {
-
-      // default: collection mode
-      candidateIds = fallbackIds;
-
-      // Als we product handle hebben: probeer dezelfde collectie te gebruiken
-      if (productHandle) {
-        const q1 = `
-          query ByHandle($handle: String!) {
-            productByHandle(handle: $handle) {
-              id
-              collections(first: 1) { nodes { id } }
-            }
-          }
-        `;
-
-        const r1 = await admin.graphql(q1, { variables: { handle: productHandle } });
-        const j1 = await r1.json();
-
-        const currentProductId = j1.data?.productByHandle?.id;
-        const colId = j1.data?.productByHandle?.collections?.nodes?.[0]?.id;
-
-        if (colId) {
-          const q2 = `
-            query FromCollection($id: ID!) {
-              collection(id: $id) {
-                products(first: 10) {
-                  nodes {
-                    id
-                    variants(first: 10) { nodes { id } }
-                  }
-                }
-              }
-            }
-          `;
-
-          const r2 = await admin.graphql(q2, { variables: { id: colId } });
-          const j2 = await r2.json();
-
-          const ids = (j2.data?.collection?.products?.nodes || [])
-            .filter((p) => p.id !== currentProductId)
-            .flatMap((p) => (p.variants?.nodes || []).map((v) => v.id))
-            .filter(Boolean)
-            .map((gid) => gid.split("/").pop());
-
-          if (ids.length) {
-  usedCollection = true;
-  candidateIds = ids;
-}
-        }
-      }
-    }
-
-    // -------- Overfetch pool (zodat filters niet alles weggooien) --------
-    const uniqueCandidates = Array.from(new Set(candidateIds)).filter(Boolean);
-    const pool = shuffle(uniqueCandidates).filter((id) => id !== current);
-
-    const TARGET = Math.min(effectiveLimit * 10, 50);
-    let useIds = pool.slice(0, TARGET);
-
-    // Vul aan met fallback als pool te klein is
-    if (useIds.length < TARGET) {
-      const extra = fallbackIds
-        .filter((id) => id !== current && !useIds.includes(id))
-        .slice(0, TARGET - useIds.length);
-      useIds = useIds.concat(extra);
-    }
-
-    useIds = Array.from(new Set(useIds)).filter(Boolean);
-    if (!useIds.length) return jsonResponse({ items: [], meta: { mode, source: "empty" } });
-
-    // Shopify GIDs
-    const gids = useIds.map((id) => `gid://shopify/ProductVariant/${id}`);
-
-    const query = `
-      query VariantCards($ids: [ID!]!) {
-        nodes(ids: $ids) {
-          ... on ProductVariant {
+    // --- Helper: fetch variant details via Admin API ---
+    async function fetchVariant(variantId) {
+      const query = `#graphql
+        query Variant($id: ID!) {
+          productVariant(id: $id) {
             id
             title
             price
             availableForSale
-            inventoryQuantity
-            inventoryPolicy
-            inventoryItem {
-              tracked
-            }
-            image { url altText }
-            product {
-              title
-              isGiftCard
-              tracksInventory
-              featuredImage { url altText }
-            }
+            image { url }
+            product { title handle }
           }
-        }
-      }
-    `;
+        }`;
 
-    const resp = await admin.graphql(query, { variables: { ids: gids } });
-    const payload = await resp.json();
-
-    const nodesAll = (payload.data?.nodes || []).filter(Boolean);
-
-    // Respecteer je settings:
-    const excludeOutOfStock = settings?.excludeOutOfStock !== false; // default true
-    const excludeGiftCards = settings?.excludeGiftCards !== false; // default true
-
-    // Filter gift cards EN out-of-stock
-    let nodesFinal = nodesAll;
-    if (excludeGiftCards) {
-      nodesFinal = nodesFinal.filter((v) => !v.product?.isGiftCard);
-    }
-    if (excludeOutOfStock) {
-      nodesFinal = nodesFinal.filter((v) => {
-        const isSoldOut =
-          !v.availableForSale || (v.inventoryItem?.tracked && (v.inventoryQuantity || 0) <= 0);
-        return !isSoldOut;
+      const resp = await admin.graphql(query, {
+        variables: { id: `gid://shopify/ProductVariant/${variantId}` },
       });
+      const json = await resp.json();
+      const v = json?.data?.productVariant;
+      if (!v) return null;
+
+      const title =
+        v?.product?.title && v?.title ? `${v.product.title} — ${v.title}` : v?.title || "Upsell";
+
+      return {
+        variantId: variantId,
+        title,
+        price: v?.price ? `${v.price} ${session?.currency || ""}`.trim() : "",
+        imageUrl: v?.image?.url || null,
+        available: v?.availableForSale !== false,
+        productHandle: v?.product?.handle || null,
+      };
     }
 
-    // Limiteer NA filtering
-   nodesFinal = nodesFinal.slice(0, effectiveLimit);
+    // --- Choose IDs based on mode ---
+    let chosenVariantIds = [];
 
-const reasonKey = usedManual
-  ? "handpicked"
-  : usedCollection
-    ? "same_collection"
-    : "store_picks";
+    if (mode === "manual" && manualIdsFromDb.length) {
+      chosenVariantIds = manualIdsFromDb;
+    } else if (mode === "fallback") {
+      chosenVariantIds = fallbackIds;
+    } else {
+      // collection mode (MVP): use fallback if no data yet (we keep it simple)
+      chosenVariantIds = fallbackIds;
+    }
 
-    // Map naar items (zonder isSoldOut, want alles is beschikbaar)
-    const items = nodesFinal.map((v) => {
-      const variantId = v.id.split("/").pop();
-      const variantTitle = (v.title || "").trim();
-      const niceVariant = variantTitle && variantTitle !== "Default Title" ? ` — ${variantTitle}` : "";
+    // exclude current variant if present
+    if (current) {
+      chosenVariantIds = chosenVariantIds.filter((id) => id !== current);
+    }
 
-      const title = `${v.product?.title || ""}${niceVariant}`.trim();
+    chosenVariantIds = shuffle(chosenVariantIds).slice(0, effectiveLimit);
 
-     return {
-  variantId,
-  title,
-  price: v.price ? String(v.price) : "",
-  imageUrl: v.image?.url || v.product?.featuredImage?.url || null,
-  reasonKey,
-};
+    const itemsRaw = await Promise.all(chosenVariantIds.map(fetchVariant));
+    let items = itemsRaw.filter(Boolean);
 
-    });
+    // filter out-of-stock if enabled
+    if (settings?.excludeOutOfStock) {
+      items = items.filter((it) => it.available !== false);
+    }
 
-    // meta is alleen voor jouw debug/test (widget negeert dit)
+    // map to widget payload
+    const widgetItems = items.slice(0, effectiveLimit).map((it, idx) => ({
+      variantId: it.variantId,
+      title: it.title,
+      price: it.price,
+      imageUrl: it.imageUrl,
+      reasonKey: mode === "manual" ? "handpicked" : "same_collection",
+      rank: idx + 1,
+    }));
+
     return jsonResponse({
-      items,
       locale: widgetLocale,
+      items: widgetItems,
       meta: {
         mode,
-        limit: effectiveLimit,
-        usedCandidates: candidateIds.length,
-        source:
-          mode === "manual"
-            ? manualIds.length
-              ? "manual_db_or_query"
-              : "fallback"
-            : productHandle
-            ? "collection_or_fallback"
-            : "fallback",
+        current,
+        productHandle,
+        effectiveLimit,
         redirectToCart: settings?.redirectToCart !== false,
-        excludeOutOfStock: settings?.excludeOutOfStock !== false,
         ai: {
           enabled: aiEnabled,
           allowed: aiAllowed,
           degraded: aiDegraded,
           used: aiCallsThisMonth,
           limit: aiMonthlyLimit,
-          monthKey,
-          reasonKey,
-usedCollection,
-usedManual,
         },
       },
     });
   } catch (err) {
     console.error("[RavenRock] /recommendations crashed:", err);
-    console.error("[RavenRock] Stack:", err.stack);
     return jsonResponse({ items: [], meta: { error: true, message: String(err) } });
   }
 }
