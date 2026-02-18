@@ -13,9 +13,18 @@
   const RR_NEXT_ALLOWED_KEY = "rr_next_allowed_at";
   const RR_FREQUENCY_HOURS_DEFAULT = 24;
 
+  // --- NEW: selectie-timestamp + delays ---
+  const RR_SELECTED_AT_KEY = "rr_selected_at";
+  const RR_UPSELL_DELAY_SEC_DEFAULT = 2;
+
+  // voorkom meerdere timers tegelijk
+  let rrTriggerTimeoutId = null;
+
   let RR_CONFIG = {
-    triggerType: "scroll",
-    triggerDelaySec: 20,
+    triggerType: "time",
+    triggerDelaySec: 20, // ✅ 20 sec na selectie
+    upsellDelaySec: RR_UPSELL_DELAY_SEC_DEFAULT, // ✅ 2 sec na openen: producten
+    autoOpen: true, // ✅ modal opent automatisch na trigger
     frequencyHours: RR_FREQUENCY_HOURS_DEFAULT,
     locale: "en",
     redirectToCart: true,
@@ -49,8 +58,10 @@
       const cfg = await res.json();
 
       return {
-        triggerType: (cfg?.triggerType || "scroll").toLowerCase(),
+        triggerType: (cfg?.triggerType || "time").toLowerCase(),
         triggerDelaySec: Number(cfg?.triggerDelaySec ?? 20) || 20,
+        upsellDelaySec: Number(cfg?.upsellDelaySec ?? RR_UPSELL_DELAY_SEC_DEFAULT) || RR_UPSELL_DELAY_SEC_DEFAULT,
+        autoOpen: typeof cfg?.autoOpen === "boolean" ? cfg.autoOpen : true,
         frequencyHours:
           Number(cfg?.frequencyHours ?? RR_FREQUENCY_HOURS_DEFAULT) || RR_FREQUENCY_HOURS_DEFAULT,
         locale: cfg?.locale || "en",
@@ -62,7 +73,7 @@
     }
   }
 
-  // --- Session gating: pas triggeren nadat shopper minimaal 1 product heeft bekeken ---
+  // --- Session gating: product gezien (blijft bestaan) ---
   const RR_SEEN_PRODUCT_KEY = "rr_seen_product";
   const RR_FIRST_PRODUCT_AT_KEY = "rr_first_product_at";
 
@@ -93,6 +104,23 @@
     }
   }
 
+  // --- NEW: selectie timestamp ---
+  function markProductSelected() {
+    try {
+      sessionStorage.setItem(RR_SELECTED_AT_KEY, String(Date.now()));
+    } catch (_) {}
+  }
+
+  function getSelectedAtMs() {
+    try {
+      const raw = sessionStorage.getItem(RR_SELECTED_AT_KEY);
+      const ms = raw ? Number(raw) : 0;
+      return Number.isFinite(ms) ? ms : 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
   const root =
     window.Shopify && Shopify.routes && Shopify.routes.root ? Shopify.routes.root : "/";
 
@@ -105,8 +133,13 @@
     return p.startsWith("/products/") ? (p.split("/products/")[1] || "").split("/")[0] : "";
   }
 
+  // ✅ robuuster: url param OF hidden input in add-to-cart form
   function getCurrentVariantId() {
-    return new URLSearchParams(window.location.search).get("variant") || "";
+    const fromUrl = new URLSearchParams(window.location.search).get("variant");
+    if (fromUrl) return fromUrl;
+
+    const fromForm = document.querySelector('form[action*="/cart/add"] input[name="id"]')?.value;
+    return fromForm || "";
   }
 
   function getShopDomain() {
@@ -180,7 +213,7 @@
     modal.hidden = true;
   }
 
-  // === NEW: robust cart UI refresh (Dawn + fallback) ===
+  // === robust cart UI refresh (Dawn + fallback) ===
   async function refreshCartUI() {
     try {
       const cartRes = await fetch(root + "cart.js", {
@@ -189,7 +222,6 @@
       });
       const cart = await cartRes.json();
 
-      // Update bubble / count
       const bubble =
         document.querySelector("cart-icon-bubble") ||
         document.querySelector(".cart-count-bubble") ||
@@ -205,7 +237,6 @@
         bubble.classList.toggle("hidden", (cart.item_count || 0) <= 0);
       }
 
-      // Dawn cart drawer refresh (if exists)
       const cartDrawer = document.querySelector("cart-drawer");
       if (cartDrawer) {
         const html = await fetch(root + "cart?section_id=cart-drawer", {
@@ -222,7 +253,6 @@
         if (typeof cartDrawer.open === "function") cartDrawer.open();
       }
 
-      // Fallback events
       document.documentElement.dispatchEvent(
         new CustomEvent("cart:refresh", { bubbles: true, detail: { cart } })
       );
@@ -249,7 +279,6 @@
     const newCloseBtn = modal.querySelector(".rr-close");
     if (newCloseBtn) newCloseBtn.addEventListener("click", closeModal);
 
-    // bind 1x
     const cardsEl = modal.querySelector("#rr-cards");
     if (cardsEl && !cardsEl.dataset.rrBound) {
       cardsEl.dataset.rrBound = "1";
@@ -268,7 +297,6 @@
           if (REDIRECT_TO_CART) {
             window.location.href = root + "cart";
           } else {
-            // ✅ FIX: refresh cart UI properly
             await refreshCartUI();
           }
         } catch (err) {
@@ -281,10 +309,11 @@
     }
   }
 
-  function openModal() {
+  // ✅ NEW: openModal met delay voor upsells
+  function openModal({ delayUpsellsMs = 0 } = {}) {
     backdrop.hidden = false;
     modal.hidden = false;
-    loadUpsells();
+    loadUpsells(delayUpsellsMs);
   }
 
   function showButtonOnce() {
@@ -293,33 +322,100 @@
     setSnoozeHours(RR_CONFIG.frequencyHours || RR_FREQUENCY_HOURS_DEFAULT);
   }
 
-  function setupTrigger() {
-    if (!isAllowedNow()) return;
+  function clearTriggerTimeout() {
+    if (rrTriggerTimeoutId) {
+      clearTimeout(rrTriggerTimeoutId);
+      rrTriggerTimeoutId = null;
+    }
+  }
 
-    if (!hasSeenProduct()) {
-      console.log("[RavenRock] Trigger not armed yet: no product viewed in session");
-      return;
+  // ✅ NEW: detecteer variant/“selectie” robuust (events + observer + polling)
+  function watchVariantSelection() {
+    const form = document.querySelector('form[action*="/cart/add"]');
+    if (!form) return;
+
+    const idInput = form.querySelector('input[name="id"]');
+    let last = (idInput?.value || getCurrentVariantId() || "").trim();
+
+    const detect = () => {
+      const cur = (idInput?.value || getCurrentVariantId() || "").trim();
+      if (!cur || cur === last) return;
+      last = cur;
+
+      markProductSelected();
+      setupTrigger(); // reset 20s vanaf wijziging
+
+      console.log("[RavenRock] Variant/selection changed -> timer reset", { variant: cur });
+    };
+
+    // 1) events
+    form.addEventListener("change", () => setTimeout(detect, 0), true);
+    form.addEventListener("click", () => setTimeout(detect, 0), true);
+
+    // 2) MutationObserver op input value-attribute (sommige themes mutaten attribuut)
+    if (idInput && "MutationObserver" in window) {
+      const obs = new MutationObserver(() => detect());
+      obs.observe(idInput, { attributes: true, attributeFilter: ["value"] });
     }
 
+    // 3) polling fallback (sommige themes veranderen .value zonder events)
+    let ticks = 0;
+    const poll = setInterval(() => {
+      ticks += 1;
+      detect();
+      if (ticks > 240) clearInterval(poll); // ~60s (240 * 250ms)
+    }, 250);
+  }
+
+  function setupTrigger() {
+    clearTriggerTimeout();
+
+    if (!isAllowedNow()) return;
+
+    // we triggeren alleen op productpages (en alleen als product gezien is)
+    if (!hasSeenProduct()) return;
+
     const delaySec = Number(RR_CONFIG.triggerDelaySec || 20) || 20;
-    const firstAt = getFirstProductAtMs() || Date.now();
-    const elapsed = Date.now() - firstAt;
+
+    // basis = selectie-tijd als die er is, anders fallback naar eerste product view
+    const baseAt = getSelectedAtMs() || getFirstProductAtMs() || Date.now();
+    const elapsed = Date.now() - baseAt;
     const remaining = Math.max(0, delaySec * 1000 - elapsed);
 
-    console.log("[RavenRock] Trigger armed (product+timer)", {
+    console.log("[RavenRock] Trigger armed (selection+timer)", {
       delaySec,
       elapsedMs: elapsed,
       remainingMs: remaining,
       path: location.pathname,
+      variant: getCurrentVariantId(),
+      baseAt,
     });
 
-    setTimeout(() => {
+    rrTriggerTimeoutId = setTimeout(() => {
+      rrTriggerTimeoutId = null;
+
       if (!isAllowedNow()) return;
+
+      // 1) knop tonen
       showButtonOnce();
+
+      // 2) modal automatisch openen
+      if (RR_CONFIG.autoOpen !== false) {
+        const delayUpsellsMs =
+          (Number(RR_CONFIG.upsellDelaySec ?? RR_UPSELL_DELAY_SEC_DEFAULT) || RR_UPSELL_DELAY_SEC_DEFAULT) * 1000;
+
+        openModal({ delayUpsellsMs });
+      }
     }, remaining);
   }
 
-  btn.addEventListener("click", openModal);
+  // manual open: ook met 2 sec delay (zoals je vroeg)
+  btn.addEventListener("click", () => {
+    const delayUpsellsMs =
+      (Number(RR_CONFIG.upsellDelaySec ?? RR_UPSELL_DELAY_SEC_DEFAULT) || RR_UPSELL_DELAY_SEC_DEFAULT) * 1000;
+    openModal({ delayUpsellsMs });
+  });
+
   backdrop.addEventListener("click", closeModal);
 
   async function fetchUpsells() {
@@ -371,7 +467,8 @@
     return "";
   }
 
-  async function loadUpsells() {
+  // ✅ NEW: loadUpsells(delayMs) -> placeholder direct, fetch na delay
+  async function loadUpsells(delayMs = 0) {
     const cardsEl = modal.querySelector("#rr-cards");
     if (!cardsEl) return;
 
@@ -385,6 +482,11 @@
         <button type="button" disabled>—</button>
       </div>
     `;
+
+    const d = Number(delayMs) || 0;
+    if (d > 0) {
+      await new Promise((r) => setTimeout(r, d));
+    }
 
     try {
       const data = await fetchUpsells();
@@ -467,6 +569,12 @@
 
     if (path.startsWith("/products/")) {
       markProductSeen();
+
+      // ✅ belangrijk: start timer “vanaf default selectie” (werkt ook zonder events)
+      markProductSelected();
+
+      // ✅ reset timer als variant wijzigt
+      watchVariantSelection();
     }
 
     RR_CONFIG = await fetchRRConfig();
@@ -484,7 +592,10 @@
       path,
       nextAllowedAt: getNextAllowedAt(),
       seenProduct: hasSeenProduct(),
+      selectedAt: getSelectedAtMs(),
       triggerDelaySec: RR_CONFIG.triggerDelaySec,
+      upsellDelaySec: RR_CONFIG.upsellDelaySec,
+      autoOpen: RR_CONFIG.autoOpen,
     });
   })();
 })();
