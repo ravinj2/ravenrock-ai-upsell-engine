@@ -1,8 +1,6 @@
-# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
-
 client_id = "a1b192cf54c5e423b8e280f083c51393"
 name = "ravenrock-ai-upsell-engine"
-application_url = "https://example.com"
+application_url = "https://society-astrology-avi-consistency.trycloudflare.com"
 embedded = true
 
 [build]
@@ -11,20 +9,17 @@ automatically_update_urls_on_dev = true
 [webhooks]
 api_version = "2026-04"
 
-  [[webhooks.subscriptions]]
-  topics = [ "app/uninstalled" ]
-  uri = "/webhooks/app/uninstalled"
-  compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
+[[webhooks.subscriptions]]
+topics = ["app/uninstalled"]
+uri = "/webhooks/app/uninstalled"
+compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
 
-  [[webhooks.subscriptions]]
-  topics = [ "app/scopes_update" ]
-  uri = "/webhooks/app/scopes_update"
+[[webhooks.subscriptions]]
+topics = ["app/scopes_update"]
+uri = "/webhooks/app/scopes_update"
 
 [access_scopes]
-# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 scopes = "write_products"
-
-application_url = "https://society-astrology-avi-consistency.trycloudflare.com"
 
 [auth]
 redirect_urls = [
@@ -33,5 +28,7 @@ redirect_urls = [
   "https://society-astrology-avi-consistency.trycloudflare.com/auth/login"
 ]
 
-
-
+[app_proxy]
+url = "/ravenrock-proxy"
+subpath = "ravenrock"
+prefix = "apps"
